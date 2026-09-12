@@ -14,7 +14,8 @@
     "lucide-react": "^1.45.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.3"
+    "react-router-dom": "^7.18.3",
+    "react-to-print": "^3.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

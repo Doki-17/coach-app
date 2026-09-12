@@ -3,20 +3,24 @@
 // if/when this app grows a real backend (e.g. Supabase), this module's functions
 // are the seam to swap out.
 
+import { LEGACY_CATEGORY_TYPE_ID } from './categoryTypes';
+
 export interface ExerciseRow {
   id: string;
   name: string;
-  tempo: string;
-  w1: string;
-  w2: string;
-  w3: string;
-  w4: string;
-  rest: string;
+  /** Values for this row's fixed (non-progression) columns, keyed by column id - e.g. `{ sets: '3', rest: '60s' }`. */
+  fixed: Record<string, string>;
+  /** One value per program week (Reps, Work Time, Distance/Time, etc. depending on the category's type). */
+  progression: string[];
 }
 
 export interface ProgramCategory {
   id: string;
   name: string;
+  /** Which column layout this category uses - see `src/lib/categoryTypes.ts`. Fixed at creation. */
+  categoryType: string;
+  /** Optional free-text label to tell apart two categories of the same type in one program, e.g. "Push" vs "Pull". */
+  subtitle: string;
   exercises: ExerciseRow[];
 }
 
@@ -92,6 +96,80 @@ export interface ProgramVersion {
   program: ProgramData;
 }
 
+// --- Program migration -----------------------------------------------------
+// Programs saved before category types existed stored exercise rows as
+// `{ tempo, w1, w2, w3, w4, rest }` and categories had no `categoryType`.
+// These shapes cover both the old and new forms so previously-saved current
+// programs and audit log history keep loading and rendering correctly -
+// normalizeProgram tags anything without a categoryType as 'legacy', which
+// reproduces the original fixed Tempo/Week1-4/Rest table exactly.
+
+interface StoredExerciseRow {
+  id: string;
+  name?: string;
+  // New shape
+  fixed?: Record<string, string>;
+  progression?: string[];
+  // Legacy shape
+  tempo?: string;
+  w1?: string;
+  w2?: string;
+  w3?: string;
+  w4?: string;
+  rest?: string;
+}
+
+interface StoredProgramCategory {
+  id: string;
+  name?: string;
+  categoryType?: string;
+  subtitle?: string;
+  exercises?: StoredExerciseRow[];
+}
+
+interface StoredProgramData {
+  title?: string;
+  weeks?: ProgramWeek[];
+  categories?: StoredProgramCategory[];
+}
+
+function normalizeExerciseRow(raw: StoredExerciseRow): ExerciseRow {
+  if (raw.fixed || raw.progression) {
+    return {
+      id: raw.id,
+      name: raw.name ?? '',
+      fixed: raw.fixed ?? {},
+      progression: raw.progression ?? [],
+    };
+  }
+  // Legacy shape - preserve tempo/w1-4/rest exactly as before.
+  return {
+    id: raw.id,
+    name: raw.name ?? '',
+    fixed: { tempo: raw.tempo ?? '', rest: raw.rest ?? '' },
+    progression: [raw.w1 ?? '', raw.w2 ?? '', raw.w3 ?? '', raw.w4 ?? ''],
+  };
+}
+
+function normalizeCategory(raw: StoredProgramCategory): ProgramCategory {
+  const categoryType = raw.categoryType ?? LEGACY_CATEGORY_TYPE_ID;
+  return {
+    id: raw.id,
+    name: raw.name ?? '',
+    categoryType,
+    subtitle: raw.subtitle ?? '',
+    exercises: (raw.exercises ?? []).map(normalizeExerciseRow),
+  };
+}
+
+function normalizeProgram(raw: StoredProgramData): ProgramData {
+  return {
+    title: raw.title ?? '',
+    weeks: raw.weeks ?? [],
+    categories: (raw.categories ?? []).map(normalizeCategory),
+  };
+}
+
 const CLIENTS_KEY = 'coachapp:clients';
 const programKey = (clientId: string) => `coachapp:program:${clientId}`;
 const historyKey = (clientId: string) => `coachapp:history:${clientId}`;
@@ -107,8 +185,15 @@ export const DEFAULT_PROGRAM: ProgramData = {
     {
       id: 'default-plyo',
       name: 'PLYO',
+      categoryType: 'strength',
+      subtitle: '',
       exercises: [
-        { id: 'default-ex-1', name: 'Single Leg Front Jump', tempo: 'X', w1: '2x10', w2: '2x12', w3: '2x14', w4: '1x14', rest: '30s' },
+        {
+          id: 'default-ex-1',
+          name: 'Single Leg Front Jump',
+          fixed: { sets: '2', rest: '30s' },
+          progression: ['10'],
+        },
       ],
     },
   ],
@@ -200,12 +285,22 @@ function touchClient(clientId: string, timestamp: string): void {
 
 /** Returns the client's current program, or a blank default template if they don't have one yet. */
 export function getProgram(clientId: string): ProgramData {
-  return read<ProgramData>(programKey(clientId), cloneProgram(DEFAULT_PROGRAM));
+  const raw = read<StoredProgramData | null>(programKey(clientId), null);
+  if (!raw) return cloneProgram(DEFAULT_PROGRAM);
+  return normalizeProgram(raw);
 }
 
 /** Returns the client's audit log of past program versions, newest first. */
 export function getHistory(clientId: string): ProgramVersion[] {
-  return read<ProgramVersion[]>(historyKey(clientId), []);
+  interface StoredProgramVersion {
+    id: string;
+    clientId: string;
+    timestamp: string;
+    note: string;
+    program: StoredProgramData;
+  }
+  const raw = read<StoredProgramVersion[]>(historyKey(clientId), []);
+  return raw.map((v) => ({ ...v, program: normalizeProgram(v.program) }));
 }
 
 /** Saves `program` as the client's current program and appends a new audit log entry for it. */

@@ -1,5 +1,6 @@
 import React from 'react';
 import { DAYS, displayProgramTitle } from '../lib/constants';
+import { getCategoryType, progressionColumnCount } from '../lib/categoryTypes';
 import type { ProgramData } from '../lib/storage';
 
 /** Read-only render of a program - used for the client's current program view and for viewing a past history entry. */
@@ -41,39 +42,50 @@ export default function ProgramSnapshotView({ program }: { program: ProgramData 
           </tbody>
         </table>
       </div>
-      {program.categories.map((category) => (
-        <div key={category.id}>
-          <div className="mb-3 bg-gray-100 p-2 border-l-4 border-blue-600">
-            <span className="text-base font-bold uppercase">{category.name}</span>
-          </div>
-          <table className="w-full text-sm text-left border-collapse">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="border p-2 w-1/4">EXERCISE</th>
-                <th className="border p-2 w-16 text-center">TEMPO</th>
-                <th className="border p-2 text-center">WEEK 1</th>
-                <th className="border p-2 text-center">WEEK 2</th>
-                <th className="border p-2 text-center">WEEK 3</th>
-                <th className="border p-2 text-center">WEEK 4</th>
-                <th className="border p-2 w-20 text-center">REST</th>
-              </tr>
-            </thead>
-            <tbody>
-              {category.exercises.map((ex) => (
-                <tr key={ex.id}>
-                  <td className="border p-2">{ex.name}</td>
-                  <td className="border p-2 text-center">{ex.tempo}</td>
-                  <td className="border p-2 text-center">{ex.w1}</td>
-                  <td className="border p-2 text-center">{ex.w2}</td>
-                  <td className="border p-2 text-center">{ex.w3}</td>
-                  <td className="border p-2 text-center">{ex.w4}</td>
-                  <td className="border p-2 text-center">{ex.rest}</td>
+      {program.categories.map((category) => {
+        const type = getCategoryType(category.categoryType);
+        const progCount = progressionColumnCount(category.categoryType, program.weeks.length);
+        return (
+          <div key={category.id}>
+            <div className="mb-3 bg-gray-100 p-2 border-l-4 border-blue-600 flex items-baseline justify-between gap-3">
+              <span className="text-base font-bold uppercase">{category.name}</span>
+              {category.subtitle && <span className="text-sm text-gray-500">{category.subtitle}</span>}
+            </div>
+            <table className="w-full text-sm text-left border-collapse">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="border p-2 w-1/4">EXERCISE</th>
+                  {type.fixedColumnsBefore.map((col) => (
+                    <th key={col.key} className="border p-2 w-20 text-center">{col.label}</th>
+                  ))}
+                  {Array.from({ length: progCount }, (_, i) => (
+                    <th key={`w-${i}`} className="border p-2 text-center">WEEK {i + 1}</th>
+                  ))}
+                  {type.fixedColumnsAfter.map((col) => (
+                    <th key={col.key} className="border p-2 w-20 text-center">{col.label}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
+              </thead>
+              <tbody>
+                {category.exercises.map((ex) => (
+                  <tr key={ex.id}>
+                    <td className="border p-2">{ex.name}</td>
+                    {type.fixedColumnsBefore.map((col) => (
+                      <td key={col.key} className="border p-2 text-center">{ex.fixed[col.key] ?? ''}</td>
+                    ))}
+                    {Array.from({ length: progCount }, (_, i) => (
+                      <td key={`w-${i}`} className="border p-2 text-center">{ex.progression[i] ?? ''}</td>
+                    ))}
+                    {type.fixedColumnsAfter.map((col) => (
+                      <td key={col.key} className="border p-2 text-center">{ex.fixed[col.key] ?? ''}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
     </div>
   );
 }

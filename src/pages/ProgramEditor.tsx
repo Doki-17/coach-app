@@ -6,6 +6,8 @@ import { jsPDF } from 'jspdf';
 import { DAYS } from '../lib/constants';
 import { buildExportFilename } from '../lib/filename';
 import ExportMenu from '../components/ExportMenu';
+import AddCategoryMenu from '../components/AddCategoryMenu';
+import { getCategoryType, progressionColumnCount, LEGACY_CATEGORY_TYPE_ID } from '../lib/categoryTypes';
 import {
   getClient,
   getProgram,
@@ -37,6 +39,16 @@ export default function ProgramEditor({ mode = 'edit' }: { mode?: ProgramEditorM
 
   const addWeek = () => {
     setWeeks([...weeks, { id: weeks.length + 1, am: Array(7).fill(''), pm: Array(7).fill('') }]);
+    // Categories with per-week progression columns (i.e. anything but a
+    // legacy category) need a new blank progression cell on every existing
+    // exercise row to match the new week count.
+    setCategories(categories.map((cat) => {
+      if (cat.categoryType === LEGACY_CATEGORY_TYPE_ID) return cat;
+      return {
+        ...cat,
+        exercises: cat.exercises.map((ex) => ({ ...ex, progression: [...ex.progression, ''] })),
+      };
+    }));
   };
 
   const updateDay = (weekIndex: number, period: 'am' | 'pm', dayIndex: number, value: string) => {
@@ -45,36 +57,77 @@ export default function ProgramEditor({ mode = 'edit' }: { mode?: ProgramEditorM
     setWeeks(newWeeks);
   };
 
-  const addCategory = () => {
-    setCategories([...categories, { id: crypto.randomUUID(), name: 'NEW CATEGORY', exercises: [] }]);
+  const addCategory = (categoryTypeId: string) => {
+    const type = getCategoryType(categoryTypeId);
+    const defaultName = type.label.split(' / ')[0].toUpperCase();
+    setCategories([...categories, {
+      id: crypto.randomUUID(),
+      name: defaultName,
+      categoryType: categoryTypeId,
+      subtitle: '',
+      exercises: [],
+    }]);
   };
 
   const updateCategoryName = (catIndex: number, value: string) => {
     const newCategories = [...categories];
-    newCategories[catIndex].name = value;
+    newCategories[catIndex] = { ...newCategories[catIndex], name: value };
+    setCategories(newCategories);
+  };
+
+  const updateCategorySubtitle = (catIndex: number, value: string) => {
+    const newCategories = [...categories];
+    newCategories[catIndex] = { ...newCategories[catIndex], subtitle: value };
     setCategories(newCategories);
   };
 
   const addExercise = (catIndex: number) => {
     const newCategories = [...categories];
-    newCategories[catIndex].exercises.push({
-      id: crypto.randomUUID(), name: '', tempo: '', w1: '', w2: '', w3: '', w4: '', rest: ''
-    });
+    const category = newCategories[catIndex];
+    const progressionLength = progressionColumnCount(category.categoryType, weeks.length);
+    newCategories[catIndex] = {
+      ...category,
+      exercises: [...category.exercises, {
+        id: crypto.randomUUID(),
+        name: '',
+        fixed: {},
+        progression: Array(progressionLength).fill(''),
+      }],
+    };
     setCategories(newCategories);
   };
 
-  const updateExercise = (catIndex: number, exIndex: number, field: string, value: string) => {
+  const updateExerciseName = (catIndex: number, exIndex: number, value: string) => {
     const newCategories = [...categories];
-    newCategories[catIndex].exercises[exIndex] = {
-      ...newCategories[catIndex].exercises[exIndex],
-      [field]: value
-    };
+    const exercises = [...newCategories[catIndex].exercises];
+    exercises[exIndex] = { ...exercises[exIndex], name: value };
+    newCategories[catIndex] = { ...newCategories[catIndex], exercises };
+    setCategories(newCategories);
+  };
+
+  const updateExerciseFixed = (catIndex: number, exIndex: number, key: string, value: string) => {
+    const newCategories = [...categories];
+    const exercises = [...newCategories[catIndex].exercises];
+    exercises[exIndex] = { ...exercises[exIndex], fixed: { ...exercises[exIndex].fixed, [key]: value } };
+    newCategories[catIndex] = { ...newCategories[catIndex], exercises };
+    setCategories(newCategories);
+  };
+
+  const updateExerciseProgression = (catIndex: number, exIndex: number, weekIndex: number, value: string) => {
+    const newCategories = [...categories];
+    const exercises = [...newCategories[catIndex].exercises];
+    const progression = [...exercises[exIndex].progression];
+    progression[weekIndex] = value;
+    exercises[exIndex] = { ...exercises[exIndex], progression };
+    newCategories[catIndex] = { ...newCategories[catIndex], exercises };
     setCategories(newCategories);
   };
 
   const deleteExercise = (catIndex: number, exIndex: number) => {
     const newCategories = [...categories];
-    newCategories[catIndex].exercises.splice(exIndex, 1);
+    const exercises = [...newCategories[catIndex].exercises];
+    exercises.splice(exIndex, 1);
+    newCategories[catIndex] = { ...newCategories[catIndex], exercises };
     setCategories(newCategories);
   };
 
@@ -207,57 +260,79 @@ export default function ProgramEditor({ mode = 'edit' }: { mode?: ProgramEditorM
         </div>
 
         <div className="space-y-8">
-          {categories.map((category, catIndex) => (
-            <div key={category.id}>
-              <div className="flex items-center gap-2 mb-4 bg-gray-100 p-2 border-l-4 border-blue-600">
-                <input 
-                  value={category.name}
-                  onChange={(e) => updateCategoryName(catIndex, e.target.value)}
-                  className="text-lg font-bold bg-transparent outline-none uppercase w-full focus:bg-white focus:px-2 rounded transition-all"
-                />
-              </div>
-              <table className="w-full text-sm text-left border-collapse">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="border p-3 w-1/4">EXERCISE</th>
-                    <th className="border p-3 w-16 text-center">TEMPO</th>
-                    <th className="border p-3 text-center">WEEK 1</th>
-                    <th className="border p-3 text-center">WEEK 2</th>
-                    <th className="border p-3 text-center">WEEK 3</th>
-                    <th className="border p-3 text-center">WEEK 4</th>
-                    <th className="border p-3 w-20 text-center">REST</th>
-                    <th className="border p-3 w-10 exclude-from-png"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {category.exercises.map((ex, exIndex) => (
-                    <tr key={ex.id} className="group hover:bg-gray-50">
-                      <td className="border p-0"><input value={ex.name} onChange={e => updateExercise(catIndex, exIndex, 'name', e.target.value)} className="w-full p-3 bg-transparent outline-none focus:bg-blue-50" /></td>
-                      <td className="border p-0"><input value={ex.tempo} onChange={e => updateExercise(catIndex, exIndex, 'tempo', e.target.value)} className="w-full p-3 bg-transparent outline-none text-center focus:bg-blue-50" /></td>
-                      <td className="border p-0"><input value={ex.w1} onChange={e => updateExercise(catIndex, exIndex, 'w1', e.target.value)} className="w-full p-3 bg-transparent outline-none text-center focus:bg-blue-50" /></td>
-                      <td className="border p-0"><input value={ex.w2} onChange={e => updateExercise(catIndex, exIndex, 'w2', e.target.value)} className="w-full p-3 bg-transparent outline-none text-center focus:bg-blue-50" /></td>
-                      <td className="border p-0"><input value={ex.w3} onChange={e => updateExercise(catIndex, exIndex, 'w3', e.target.value)} className="w-full p-3 bg-transparent outline-none text-center focus:bg-blue-50" /></td>
-                      <td className="border p-0"><input value={ex.w4} onChange={e => updateExercise(catIndex, exIndex, 'w4', e.target.value)} className="w-full p-3 bg-transparent outline-none text-center focus:bg-blue-50" /></td>
-                      <td className="border p-0"><input value={ex.rest} onChange={e => updateExercise(catIndex, exIndex, 'rest', e.target.value)} className="w-full p-3 bg-transparent outline-none text-center focus:bg-blue-50" /></td>
-                      <td className="border p-0 text-center exclude-from-png">
-                        <button onClick={() => deleteExercise(catIndex, exIndex)} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Trash2 className="w-4 h-4 mx-auto" />
-                        </button>
-                      </td>
+          {categories.map((category, catIndex) => {
+            const type = getCategoryType(category.categoryType);
+            const progCount = progressionColumnCount(category.categoryType, weeks.length);
+            return (
+              <div key={category.id}>
+                <div className="flex items-center gap-3 mb-4 bg-gray-100 p-2 border-l-4 border-blue-600">
+                  <input
+                    value={category.name}
+                    onChange={(e) => updateCategoryName(catIndex, e.target.value)}
+                    className="text-lg font-bold bg-transparent outline-none uppercase flex-1 min-w-0 focus:bg-white focus:px-2 rounded transition-all"
+                  />
+                  <input
+                    value={category.subtitle}
+                    onChange={(e) => updateCategorySubtitle(catIndex, e.target.value)}
+                    placeholder="Subtitle (optional)"
+                    className="text-sm text-gray-500 bg-transparent outline-none flex-1 min-w-0 text-right focus:bg-white focus:px-2 rounded transition-all placeholder:text-gray-400"
+                  />
+                </div>
+                <table className="w-full text-sm text-left border-collapse">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="border p-3 w-1/4">EXERCISE</th>
+                      {type.fixedColumnsBefore.map((col) => (
+                        <th key={col.key} className="border p-3 w-20 text-center">{col.label}</th>
+                      ))}
+                      {Array.from({ length: progCount }, (_, i) => (
+                        <th key={`w-${i}`} className="border p-3 text-center">WEEK {i + 1}</th>
+                      ))}
+                      {type.fixedColumnsAfter.map((col) => (
+                        <th key={col.key} className="border p-3 w-20 text-center">{col.label}</th>
+                      ))}
+                      <th className="border p-3 w-10 exclude-from-png"></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              <button className="exclude-from-png mt-2 flex items-center gap-1 text-sm text-blue-600 font-medium hover:underline" onClick={() => addExercise(catIndex)}>
-                <Plus className="w-4 h-4" /> Add Exercise Row
-              </button>
-            </div>
-          ))}
+                  </thead>
+                  <tbody>
+                    {category.exercises.map((ex, exIndex) => (
+                      <tr key={ex.id} className="group hover:bg-gray-50">
+                        <td className="border p-0">
+                          <input value={ex.name} onChange={(e) => updateExerciseName(catIndex, exIndex, e.target.value)} className="w-full p-3 bg-transparent outline-none focus:bg-blue-50" />
+                        </td>
+                        {type.fixedColumnsBefore.map((col) => (
+                          <td key={col.key} className="border p-0">
+                            <input value={ex.fixed[col.key] ?? ''} onChange={(e) => updateExerciseFixed(catIndex, exIndex, col.key, e.target.value)} className="w-full p-3 bg-transparent outline-none text-center focus:bg-blue-50" />
+                          </td>
+                        ))}
+                        {Array.from({ length: progCount }, (_, i) => (
+                          <td key={`w-${i}`} className="border p-0">
+                            <input value={ex.progression[i] ?? ''} onChange={(e) => updateExerciseProgression(catIndex, exIndex, i, e.target.value)} className="w-full p-3 bg-transparent outline-none text-center focus:bg-blue-50" />
+                          </td>
+                        ))}
+                        {type.fixedColumnsAfter.map((col) => (
+                          <td key={col.key} className="border p-0">
+                            <input value={ex.fixed[col.key] ?? ''} onChange={(e) => updateExerciseFixed(catIndex, exIndex, col.key, e.target.value)} className="w-full p-3 bg-transparent outline-none text-center focus:bg-blue-50" />
+                          </td>
+                        ))}
+                        <td className="border p-0 text-center exclude-from-png">
+                          <button onClick={() => deleteExercise(catIndex, exIndex)} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Trash2 className="w-4 h-4 mx-auto" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <button className="exclude-from-png mt-2 flex items-center gap-1 text-sm text-blue-600 font-medium hover:underline" onClick={() => addExercise(catIndex)}>
+                  <Plus className="w-4 h-4" /> Add Exercise Row
+                </button>
+              </div>
+            );
+          })}
         </div>
 
-        <button className="exclude-from-png mt-8 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-200 font-medium w-full justify-center border border-gray-300" onClick={addCategory}>
-          <Plus className="w-5 h-5" /> Add New Category (e.g. UB MXS, LB MXS)
-        </button>
+        <AddCategoryMenu onAdd={addCategory} />
       </div>
     </div>
   );

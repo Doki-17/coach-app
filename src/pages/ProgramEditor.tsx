@@ -1,28 +1,39 @@
 import React, { useState, useRef } from 'react';
-import { ArrowLeft, Download, Save, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, Plus, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toPng } from 'html-to-image';
+import { jsPDF } from 'jspdf';
+import { DAYS } from '../lib/constants';
+import { buildExportFilename } from '../lib/filename';
+import ExportMenu from '../components/ExportMenu';
+import {
+  getClient,
+  getProgram,
+  saveProgram,
+  cloneProgram,
+  DEFAULT_PROGRAM,
+  type ProgramWeek,
+  type ProgramCategory,
+  type ProgramData,
+} from '../lib/storage';
 
-const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+export type ProgramEditorMode = 'edit' | 'new';
 
-export default function ProgramEditor() {
+/** Picks what the editor starts from: the client's saved current program, or a blank template for a brand-new one. */
+function loadInitialProgram(clientId: string | undefined, mode: ProgramEditorMode): ProgramData {
+  if (!clientId || mode === 'new') return cloneProgram(DEFAULT_PROGRAM);
+  return getProgram(clientId);
+}
+
+export default function ProgramEditor({ mode = 'edit' }: { mode?: ProgramEditorMode }) {
   const navigate = useNavigate();
   const { clientId } = useParams();
   const printRef = useRef<HTMLDivElement>(null);
 
-  const [weeks, setWeeks] = useState([
-    { id: 1, am: Array(7).fill(''), pm: Array(7).fill('') }
-  ]);
-
-  const [categories, setCategories] = useState([
-    {
-      id: crypto.randomUUID(),
-      name: 'PLYO',
-      exercises: [
-        { id: crypto.randomUUID(), name: 'Single Leg Front Jump', tempo: 'X', w1: '2x10', w2: '2x12', w3: '2x14', w4: '1x14', rest: '30s' }
-      ]
-    }
-  ]);
+  const [clientName] = useState(() => (clientId ? getClient(clientId)?.nickname ?? 'Client' : 'Client'));
+  const [title, setTitle] = useState(() => loadInitialProgram(clientId, mode).title);
+  const [weeks, setWeeks] = useState<ProgramWeek[]>(() => loadInitialProgram(clientId, mode).weeks);
+  const [categories, setCategories] = useState<ProgramCategory[]>(() => loadInitialProgram(clientId, mode).categories);
 
   const addWeek = () => {
     setWeeks([...weeks, { id: weeks.length + 1, am: Array(7).fill(''), pm: Array(7).fill('') }]);
@@ -67,46 +78,83 @@ export default function ProgramEditor() {
     setCategories(newCategories);
   };
 
+  const handleSave = () => {
+    if (!clientId) return;
+    saveProgram(clientId, { title, weeks, categories });
+    // Saving is the end of the edit flow - head back to the client's landing
+    // page, which will show the details we just saved.
+    navigate(`/client/${clientId}`, { state: { justSaved: true } });
+  };
+
+  const captureSnapshot = async () => {
+    if (!printRef.current) return null;
+    const width = printRef.current.offsetWidth;
+    const height = printRef.current.offsetHeight;
+    const dataUrl = await toPng(printRef.current, {
+      cacheBust: true,
+      backgroundColor: '#ffffff', // Ensures the background isn't transparent
+      filter: (node) => {
+        // Removes UI buttons from the final image
+        return !(node as HTMLElement).classList?.contains('exclude-from-png');
+      }
+    });
+    return { dataUrl, width, height };
+  };
+
   const handleExportPNG = async () => {
-    if (!printRef.current) return;
-    
     try {
-      const dataUrl = await toPng(printRef.current, {
-        cacheBust: true,
-        backgroundColor: '#ffffff', // Ensures the background isn't transparent
-        filter: (node) => {
-          // Removes UI buttons from the final image
-          return !node.classList?.contains('exclude-from-png');
-        }
-      });
-      
+      const captured = await captureSnapshot();
+      if (!captured) return;
       const link = document.createElement('a');
-      link.download = `Conditioning_Program_${clientId || 'Client'}.png`;
-      link.href = dataUrl;
+      link.download = buildExportFilename(clientName, title, 'png');
+      link.href = captured.dataUrl;
       link.click();
     } catch (err) {
       console.error('Error generating PNG', err);
     }
   };
 
+  const handleExportPDF = async () => {
+    try {
+      const captured = await captureSnapshot();
+      if (!captured) return;
+      const pdf = new jsPDF({
+        orientation: captured.width >= captured.height ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [captured.width, captured.height],
+      });
+      pdf.addImage(captured.dataUrl, 'PNG', 0, 0, captured.width, captured.height);
+      pdf.save(buildExportFilename(clientName, title, 'pdf'));
+    } catch (err) {
+      console.error('Error generating PDF', err);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto p-6">
       <div className="flex justify-between items-center mb-6">
-        <button onClick={() => navigate('/')} className="text-gray-600 hover:text-gray-900 flex items-center gap-2">
-          <ArrowLeft className="w-4 h-4" /> Back to Dashboard
+        <button onClick={() => navigate(`/client/${clientId}`)} className="text-gray-600 hover:text-gray-900 flex items-center gap-2">
+          <ArrowLeft className="w-4 h-4" /> Back to {clientName}
         </button>
-        <div className="flex gap-3">
-          <button className="bg-white border border-gray-300 px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-gray-50">
+        <div className="flex items-center gap-3">
+          <ExportMenu onExportPNG={handleExportPNG} onExportPDF={handleExportPDF} />
+          <button onClick={handleSave} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700">
             <Save className="w-4 h-4" /> Save
-          </button>
-          <button onClick={handleExportPNG} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700">
-            <Download className="w-4 h-4" /> Export PNG
           </button>
         </div>
       </div>
 
+      <p className="text-sm text-gray-500 mb-2">
+        {mode === 'new' ? `New program for ${clientName}` : `Editing ${clientName}'s program`}
+      </p>
+
       <div ref={printRef} className="bg-white p-8 rounded-xl shadow-sm border border-gray-200">
-        <h2 className="text-2xl font-bold mb-6 uppercase tracking-wider text-center">Conditioning Program</h2>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="[Insert program title]"
+          className="text-2xl font-bold mb-6 uppercase tracking-wider text-center bg-transparent outline-none w-full focus:bg-blue-50 rounded transition-colors placeholder:normal-case placeholder:text-gray-400"
+        />
 
         <div className="mb-10 overflow-x-auto">
           <table className="w-full text-sm text-left border-collapse table-fixed">

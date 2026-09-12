@@ -1,10 +1,20 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Plus } from 'lucide-react';
+import { Users, Plus, MapPin } from 'lucide-react';
+import { getClients, createClient, type NewClientInput } from '../lib/storage';
+import ClientProfileModal from '../components/ClientProfileModal';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  // Mock data for now
-  const clients = [{ id: '1', name: 'Elle', lastUpdated: '2026-09-10' }];
+  const [clients, setClients] = useState(() => getClients());
+  const [showNewClient, setShowNewClient] = useState(false);
+
+  const handleCreateClient = (input: NewClientInput) => {
+    const client = createClient(input);
+    setClients(getClients());
+    setShowNewClient(false);
+    navigate(`/client/${client.id}`);
+  };
 
   return (
     <div className="max-w-5xl mx-auto p-6">
@@ -13,24 +23,41 @@ export default function Dashboard() {
           <Users className="w-8 h-8 text-blue-600" />
           Client Dashboard
         </h1>
-        <button className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700">
+        <button onClick={() => setShowNewClient(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700">
           <Plus className="w-5 h-5" /> New Client
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {clients.map((client) => (
-          <div 
-            key={client.id} 
-            onClick={() => navigate(`/editor/${client.id}`)}
-            className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"
-          >
-            <h2 className="text-xl font-semibold mb-2">{client.name}</h2>
-            <p className="text-sm text-gray-500">Last updated: {client.lastUpdated}</p>
-            <button className="mt-4 text-sm font-medium text-blue-600">Edit Program &rarr;</button>
-          </div>
-        ))}
+        {clients.map((client) => {
+          const fullName = [client.firstName, client.lastName].filter(Boolean).join(' ');
+          return (
+            <div
+              key={client.id}
+              onClick={() => navigate(`/client/${client.id}`)}
+              className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"
+            >
+              <h2 className="text-xl font-semibold mb-1">{client.nickname}</h2>
+              {fullName && <p className="text-xs text-gray-400 mb-1">{fullName}</p>}
+              {client.location && (
+                <p className="text-xs text-gray-400 mb-2 flex items-center gap-1">
+                  <MapPin className="w-3 h-3" /> {client.location}
+                </p>
+              )}
+              <p className="text-sm text-gray-500">
+                {client.lastUpdated
+                  ? `Last updated: ${new Date(client.lastUpdated).toLocaleString()}`
+                  : 'No programs saved yet'}
+              </p>
+              <button className="mt-4 text-sm font-medium text-blue-600">View Program &rarr;</button>
+            </div>
+          );
+        })}
       </div>
+
+      {showNewClient && (
+        <ClientProfileModal mode="create" onClose={() => setShowNewClient(false)} onSubmit={handleCreateClient} />
+      )}
     </div>
   );
 }

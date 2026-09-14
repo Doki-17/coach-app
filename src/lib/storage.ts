@@ -10,8 +10,8 @@ export interface ExerciseRow {
   name: string;
   /** Values for this row's fixed (non-progression) columns, keyed by column id - e.g. `{ sets: '3', rest: '60s' }`. */
   fixed: Record<string, string>;
-  /** One value per program week (Reps, Work Time, Distance/Time, etc. depending on the category's type). */
-  progression: string[];
+  /** One value-bag per program week, keyed by that category type's progression column id(s) - e.g. `[{ set: '3', rep: '10' }, ...]`. Empty array if the category type has no progression columns. */
+  progression: Record<string, string>[];
 }
 
 export interface ProgramCategory {
@@ -28,10 +28,15 @@ export interface ProgramWeek {
   id: number;
   am: string[];
   pm: string[];
+  /** Whether this week's calendar shows a second (PM) row per day. Off by default - most days are one session; a coach turns it on for a week that has any double-session days. */
+  showPm: boolean;
 }
 
 export interface ProgramData {
   title: string;
+  /** Optional program date range, e.g. the month this program covers - ISO date strings (yyyy-mm-dd) from a date input, or '' if not set. Shown above the calendar and included in PNG/PDF exports. */
+  startDate: string;
+  endDate: string;
   weeks: ProgramWeek[];
   categories: ProgramCategory[];
 }
@@ -97,20 +102,23 @@ export interface ProgramVersion {
 }
 
 // --- Program migration -----------------------------------------------------
-// Programs saved before category types existed stored exercise rows as
-// `{ tempo, w1, w2, w3, w4, rest }` and categories had no `categoryType`.
-// These shapes cover both the old and new forms so previously-saved current
-// programs and audit log history keep loading and rendering correctly -
-// normalizeProgram tags anything without a categoryType as 'legacy', which
-// reproduces the original fixed Tempo/Week1-4/Rest table exactly.
+// Program data has gone through two shapes before this one:
+//   1. Original: exercise rows were `{ tempo, w1, w2, w3, w4, rest }` and
+//      categories had no `categoryType`.
+//   2. First category-types pass: rows were `{ fixed, progression }` where
+//      `progression` was a plain `string[]` (one value per week).
+// This shape's `progression` is `Record<string,string>[]` (one value-bag per
+// week, since a type like Workout tracks more than one field per week).
+// normalizeProgram upgrades all of the above so previously-saved current
+// programs and audit log history keep loading and rendering correctly.
 
 interface StoredExerciseRow {
   id: string;
   name?: string;
-  // New shape
+  // Current shape
   fixed?: Record<string, string>;
-  progression?: string[];
-  // Legacy shape
+  progression?: unknown;
+  // Legacy (pre-category-types) shape
   tempo?: string;
   w1?: string;
   w2?: string;
@@ -127,10 +135,28 @@ interface StoredProgramCategory {
   exercises?: StoredExerciseRow[];
 }
 
+interface StoredProgramWeek {
+  id: number;
+  am?: string[];
+  pm?: string[];
+  showPm?: boolean;
+}
+
 interface StoredProgramData {
   title?: string;
-  weeks?: ProgramWeek[];
+  startDate?: string;
+  endDate?: string;
+  weeks?: StoredProgramWeek[];
   categories?: StoredProgramCategory[];
+}
+
+function normalizeProgression(raw: unknown): Record<string, string>[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    if (entry && typeof entry === 'object') return entry as Record<string, string>;
+    // Older shape: a plain string per week (single anonymous progression field).
+    return { value: typeof entry === 'string' ? entry : '' };
+  });
 }
 
 function normalizeExerciseRow(raw: StoredExerciseRow): ExerciseRow {
@@ -139,15 +165,15 @@ function normalizeExerciseRow(raw: StoredExerciseRow): ExerciseRow {
       id: raw.id,
       name: raw.name ?? '',
       fixed: raw.fixed ?? {},
-      progression: raw.progression ?? [],
+      progression: normalizeProgression(raw.progression),
     };
   }
-  // Legacy shape - preserve tempo/w1-4/rest exactly as before.
+  // Original (pre-category-types) shape - preserve tempo/w1-4/rest exactly as before.
   return {
     id: raw.id,
     name: raw.name ?? '',
     fixed: { tempo: raw.tempo ?? '', rest: raw.rest ?? '' },
-    progression: [raw.w1 ?? '', raw.w2 ?? '', raw.w3 ?? '', raw.w4 ?? ''],
+    progression: [raw.w1 ?? '', raw.w2 ?? '', raw.w3 ?? '', raw.w4 ?? ''].map((v) => ({ value: v })),
   };
 }
 
@@ -162,10 +188,26 @@ function normalizeCategory(raw: StoredProgramCategory): ProgramCategory {
   };
 }
 
+function normalizeWeek(raw: StoredProgramWeek): ProgramWeek {
+  const am = raw.am ?? Array(7).fill('');
+  const pm = raw.pm ?? Array(7).fill('');
+  return {
+    id: raw.id,
+    am,
+    pm,
+    // Programs saved before this toggle existed didn't have `showPm` - default
+    // it to whatever was already true for that week, so any PM entries a
+    // coach had already filled in stay visible instead of getting hidden.
+    showPm: raw.showPm ?? pm.some((v) => v.trim() !== ''),
+  };
+}
+
 function normalizeProgram(raw: StoredProgramData): ProgramData {
   return {
     title: raw.title ?? '',
-    weeks: raw.weeks ?? [],
+    startDate: raw.startDate ?? '',
+    endDate: raw.endDate ?? '',
+    weeks: (raw.weeks ?? []).map(normalizeWeek),
     categories: (raw.categories ?? []).map(normalizeCategory),
   };
 }
@@ -180,23 +222,10 @@ const MAX_HISTORY_PER_CLIENT = 100;
 // placeholder so the coach names each new program themselves.
 export const DEFAULT_PROGRAM: ProgramData = {
   title: '',
-  weeks: [{ id: 1, am: Array(7).fill(''), pm: Array(7).fill('') }],
-  categories: [
-    {
-      id: 'default-plyo',
-      name: 'PLYO',
-      categoryType: 'strength',
-      subtitle: '',
-      exercises: [
-        {
-          id: 'default-ex-1',
-          name: 'Single Leg Front Jump',
-          fixed: { sets: '2', rest: '30s' },
-          progression: ['10'],
-        },
-      ],
-    },
-  ],
+  startDate: '',
+  endDate: '',
+  weeks: [{ id: 1, am: Array(7).fill(''), pm: Array(7).fill(''), showPm: false }],
+  categories: [],
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -221,14 +250,19 @@ export function cloneProgram(program: ProgramData): ProgramData {
   return JSON.parse(JSON.stringify(program));
 }
 
+/**
+ * Structural equality check between two programs - used to tell whether a
+ * coach actually changed anything before writing a new audit log entry, and
+ * to detect unsaved changes when leaving the editor. Programs are always
+ * built from plain objects/arrays in a consistent shape, so a JSON-based
+ * comparison is a safe stand-in for a real deep-equal here.
+ */
+export function programsEqual(a: ProgramData, b: ProgramData): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export function getClients(): Client[] {
   const raw = read<StoredClientRecord[]>(CLIENTS_KEY, []);
-  if (raw.length === 0) {
-    // Seed with the original mock client so the app isn't empty on first run.
-    const seeded: Client[] = [normalizeClient({ id: '1', name: 'Elle' })];
-    write(CLIENTS_KEY, seeded);
-    return seeded;
-  }
   return raw.map(normalizeClient);
 }
 

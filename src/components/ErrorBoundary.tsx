@@ -27,13 +27,13 @@ export default class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return (
-        <div className="max-w-2xl mx-auto p-8">
+        <div className="max-w-2xl mx-auto p-8 dark:text-gray-100">
           <h1 className="text-xl font-bold text-red-600 mb-2">Something went wrong</h1>
-          <p className="text-gray-700 mb-4">
+          <p className="text-gray-700 dark:text-gray-300 mb-4">
             The app hit an error while rendering this page. Reloading may help; if it
             keeps happening, the details below are worth sharing.
           </p>
-          <pre className="bg-gray-100 border border-gray-200 rounded-lg p-4 text-xs text-gray-800 whitespace-pre-wrap overflow-x-auto">
+          <pre className="bg-gray-100 border border-gray-200 rounded-lg p-4 text-xs text-gray-800 whitespace-pre-wrap overflow-x-auto dark:bg-gray-800 dark:border-gray-700 dark:text-gray-300">
             {this.state.error.message}
             {'\n\n'}
             {this.state.error.stack}

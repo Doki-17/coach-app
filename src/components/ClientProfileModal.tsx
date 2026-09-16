@@ -12,12 +12,13 @@ interface ClientProfileModalProps {
   onSubmit: (input: NewClientInput) => void;
 }
 
-const fieldClass = "w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-100 dark:border-gray-600";
+const fieldClass = "w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 bg-off-white text-gray-900 dark:bg-gray-900 dark:text-gray-100 dark:border-gray-600";
 const labelClass = "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1";
 
 /** Modal form for creating a new client, or editing an existing one's profile. Only nickname is required. */
 export default function ClientProfileModal({ mode, initial, onClose, onSubmit }: ClientProfileModalProps) {
   const [nickname, setNickname] = useState(initial?.nickname ?? '');
+  const [email, setEmail] = useState(initial?.email ?? '');
   const [lastName, setLastName] = useState(initial?.lastName ?? '');
   const [firstName, setFirstName] = useState(initial?.firstName ?? '');
   const [weight, setWeight] = useState(initial?.weightKg != null ? String(initial.weightKg) : '');
@@ -38,6 +39,7 @@ export default function ClientProfileModal({ mode, initial, onClose, onSubmit }:
     if (!canSubmit) return;
     onSubmit({
       nickname,
+      email,
       firstName,
       lastName,
       weightKg: weightKg && !Number.isNaN(weightKg) ? weightKg : null,
@@ -52,7 +54,7 @@ export default function ClientProfileModal({ mode, initial, onClose, onSubmit }:
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto dark:bg-gray-800"
+        className="bg-off-white rounded-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto dark:bg-gray-800"
       >
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-bold">{heading}</h2>
@@ -71,6 +73,17 @@ export default function ClientProfileModal({ mode, initial, onClose, onSubmit }:
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
               placeholder="What do you call them?"
+              className={fieldClass}
+            />
+          </div>
+
+          <div>
+            <label className={labelClass}>Client's Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="So you know where to send their invite link"
               className={fieldClass}
             />
           </div>

@@ -21,7 +21,7 @@ export default function ExportPreviewModal({
 }) {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6" onClick={onClose}>
-      <div className="bg-white rounded-xl max-w-3xl w-full max-h-[85vh] flex flex-col p-6 dark:bg-gray-800" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-off-white rounded-xl max-w-3xl w-full max-h-[85vh] flex flex-col p-6 dark:bg-gray-800" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-4">
           <div>
             <h3 className="text-lg font-bold">Preview before downloading</h3>

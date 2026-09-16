@@ -32,7 +32,7 @@ export default function AddCategoryMenu({ onAdd }: { onAdd: (categoryTypeId: str
         <Plus className="w-5 h-5" /> Add New Category <ChevronDown className="w-4 h-4" />
       </button>
       {open && (
-        <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+        <div className="absolute z-10 mt-1 w-full bg-off-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
           {CATEGORY_TYPES.map((type) => {
             const visual = getCategoryVisual(type.id);
             return (

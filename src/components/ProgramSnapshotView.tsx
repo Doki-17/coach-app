@@ -1,12 +1,22 @@
 import React from 'react';
-import { DAYS, displayProgramTitle, formatProgramDate } from '../lib/constants';
+import { DAYS, currentProgramWeekNumber, displayProgramTitle, formatProgramDate } from '../lib/constants';
 import { getCategoryType, progressionWeekCount } from '../lib/categoryTypes';
 import { getCategoryVisual } from '../lib/categoryVisuals';
 import logo from '../assets/logo.png';
 import type { ProgramData } from '../lib/storage';
 
 /** Read-only render of a program - used for the client's current program view and for viewing a past history entry. */
-export default function ProgramSnapshotView({ program }: { program: ProgramData }) {
+export default function ProgramSnapshotView({
+  program,
+  hideCompletedWeeks = false,
+}: {
+  program: ProgramData;
+  /** When true, weeks that are fully in the past (based on the program's start date) are dropped from the weekly calendar - the exercise tables below it are unaffected. */
+  hideCompletedWeeks?: boolean;
+}) {
+  const currentWeek = hideCompletedWeeks ? currentProgramWeekNumber(program.startDate) : null;
+  const visibleWeeks = currentWeek == null ? program.weeks : program.weeks.filter((w) => w.id >= currentWeek);
+
   return (
     <div className="space-y-8">
       <div className="relative mb-4 min-h-44 flex items-center justify-center">
@@ -25,6 +35,7 @@ export default function ProgramSnapshotView({ program }: { program: ProgramData 
         <img src={logo} alt="" className="absolute right-0 top-1/2 -translate-y-1/2 w-40 h-40 object-contain pointer-events-none" />
       </div>
 
+      {visibleWeeks.length > 0 ? (
       <div className="rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-center border-collapse table-fixed">
@@ -37,10 +48,10 @@ export default function ProgramSnapshotView({ program }: { program: ProgramData 
             </tr>
           </thead>
           <tbody>
-            {program.weeks.map((week, wIndex) => {
+            {visibleWeeks.map((week, wIndex) => {
               const isDoubleDay = (i: number) => week.am[i].trim() !== '' && week.pm[i].trim() !== '';
               // Subtle alternating fill so a long program is easier to scan week to week.
-              const rowBg = wIndex % 2 === 1 ? 'bg-gray-50' : 'bg-white';
+              const rowBg = wIndex % 2 === 1 ? 'bg-gray-50' : 'bg-off-white';
               return (
                 <React.Fragment key={week.id}>
                   <tr>
@@ -83,6 +94,11 @@ export default function ProgramSnapshotView({ program }: { program: ProgramData 
         </table>
       </div>
       </div>
+      ) : (
+      <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-gray-500">
+        <p>This program's weeks are all complete.</p>
+      </div>
+      )}
       {program.categories.map((category) => {
         const type = getCategoryType(category.categoryType);
         const weekCount = progressionWeekCount(type, program.weeks.length);
@@ -102,7 +118,7 @@ export default function ProgramSnapshotView({ program }: { program: ProgramData 
             <div className="rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
             <table className="w-full text-sm text-left border-collapse">
-              <thead className="bg-gray-50">
+              <thead className={visual.headerBg}>
                 {multiField ? (
                   <>
                     <tr>

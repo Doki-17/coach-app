@@ -1,8 +1,18 @@
-// Local-first data layer for clients, programs, and per-client program history (audit log).
-// Everything here is backed by localStorage. No network/backend involved yet -
-// if/when this app grows a real backend (e.g. Supabase), this module's functions
-// are the seam to swap out.
+// Supabase-backed data layer for clients, programs, and per-client program
+// history (audit log). Replaces the earlier localStorage-only version -
+// see the project's ERD/schema notes for the table shapes this maps to.
+//
+// Design note: `programs.data` (jsonb) holds only `{ weeks, categories }`,
+// not the whole ProgramData - title/startDate/endDate are real columns on
+// `programs` so they stay queryable. `program_versions.program_snapshot`
+// (jsonb) holds the FULL ProgramData per version, since history is an
+// immutable audit log, not something queried piecemeal. Keeping the
+// weeks/categories shape inside jsonb (rather than further-normalized
+// tables) is deliberate: the modular block-based program redesign discussed
+// separately would replace that shape entirely, and jsonb absorbs that
+// kind of change in application code instead of a schema migration.
 
+import { supabase } from './supabaseClient';
 import { LEGACY_CATEGORY_TYPE_ID } from './categoryTypes';
 
 export interface ExerciseRow {
@@ -50,8 +60,27 @@ export interface Client {
   heightCm: number | null;
   location: string; // gym / training location - useful for coaches who travel to clients
   remarks: string;
+  /** The client's own email - mainly so the coach knows where to send their invite link (see inviteToken). No longer used to auto-match a signup; claiming is invite-link-based now. */
+  email: string;
+  /** Random per-client token used in that client's personal invite link - see buildInviteUrl/claimInvite. Generated automatically when the client is created. */
+  inviteToken: string;
+  /** When the client account first claimed this profile via their invite link, or null if they haven't yet. Informational only - claiming itself is enforced server-side by the claim_invite() RPC. */
+  inviteClaimedAt: string | null;
   lastUpdated: string | null; // ISO timestamp of the last program save, null if never saved
+  /** The client's own notification preferences (currently just email on/off - see NotificationSettings). */
+  notificationSettings: NotificationSettings;
+  /**
+   * Archiving flag, set by the coach from the Dashboard client card. 'active'
+   * by default. 'inactive' means: the client's own hub page shows their
+   * program as blank/empty (nothing is deleted - see setClientStatus), and
+   * the coach's hub page for them becomes view-only (History/Export/View
+   * still work, but New Program/Edit Program/Restore are locked until
+   * they're set back to active).
+   */
+  status: ClientStatus;
 }
+
+export type ClientStatus = 'active' | 'inactive';
 
 /** Fields needed to create a client. Only `nickname` is required. */
 export interface NewClientInput {
@@ -62,35 +91,7 @@ export interface NewClientInput {
   heightCm?: number | null;
   location?: string;
   remarks?: string;
-}
-
-// Older saved clients only had `{ id, name, lastUpdated }`. This shape covers
-// both old and new records so existing localStorage data keeps working.
-interface StoredClientRecord {
-  id: string;
-  name?: string;
-  nickname?: string;
-  firstName?: string;
-  lastName?: string;
-  weightKg?: number | null;
-  heightCm?: number | null;
-  location?: string;
-  remarks?: string;
-  lastUpdated?: string | null;
-}
-
-function normalizeClient(raw: StoredClientRecord): Client {
-  return {
-    id: raw.id,
-    nickname: raw.nickname ?? raw.name ?? 'Client',
-    firstName: raw.firstName ?? '',
-    lastName: raw.lastName ?? '',
-    weightKg: raw.weightKg ?? null,
-    heightCm: raw.heightCm ?? null,
-    location: raw.location ?? '',
-    remarks: raw.remarks ?? '',
-    lastUpdated: raw.lastUpdated ?? null,
-  };
+  email?: string;
 }
 
 export interface ProgramVersion {
@@ -102,20 +103,14 @@ export interface ProgramVersion {
 }
 
 // --- Program migration -----------------------------------------------------
-// Program data has gone through two shapes before this one:
-//   1. Original: exercise rows were `{ tempo, w1, w2, w3, w4, rest }` and
-//      categories had no `categoryType`.
-//   2. First category-types pass: rows were `{ fixed, progression }` where
-//      `progression` was a plain `string[]` (one value per week).
-// This shape's `progression` is `Record<string,string>[]` (one value-bag per
-// week, since a type like Workout tracks more than one field per week).
-// normalizeProgram upgrades all of the above so previously-saved current
-// programs and audit log history keep loading and rendering correctly.
+// The jsonb blobs (`programs.data`, `program_versions.program_snapshot`)
+// have gone through a couple of shapes historically (from the localStorage
+// era). normalizeProgram upgrades all of the above so older saved data keeps
+// loading and rendering correctly even if it predates a given field.
 
 interface StoredExerciseRow {
   id: string;
   name?: string;
-  // Current shape
   fixed?: Record<string, string>;
   progression?: unknown;
   // Legacy (pre-category-types) shape
@@ -195,9 +190,6 @@ function normalizeWeek(raw: StoredProgramWeek): ProgramWeek {
     id: raw.id,
     am,
     pm,
-    // Programs saved before this toggle existed didn't have `showPm` - default
-    // it to whatever was already true for that week, so any PM entries a
-    // coach had already filled in stay visible instead of getting hidden.
     showPm: raw.showPm ?? pm.some((v) => v.trim() !== ''),
   };
 }
@@ -212,12 +204,6 @@ function normalizeProgram(raw: StoredProgramData): ProgramData {
   };
 }
 
-const CLIENTS_KEY = 'coachapp:clients';
-const programKey = (clientId: string) => `coachapp:program:${clientId}`;
-const historyKey = (clientId: string) => `coachapp:history:${clientId}`;
-
-const MAX_HISTORY_PER_CLIENT = 100;
-
 // Title is intentionally blank - the editor shows a "[Insert program title]"
 // placeholder so the coach names each new program themselves.
 export const DEFAULT_PROGRAM: ProgramData = {
@@ -228,24 +214,6 @@ export const DEFAULT_PROGRAM: ProgramData = {
   categories: [],
 };
 
-function read<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function write<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (err) {
-    console.error(`Failed to write ${key} to localStorage`, err);
-  }
-}
-
 export function cloneProgram(program: ProgramData): ProgramData {
   return JSON.parse(JSON.stringify(program));
 }
@@ -253,106 +221,239 @@ export function cloneProgram(program: ProgramData): ProgramData {
 /**
  * Structural equality check between two programs - used to tell whether a
  * coach actually changed anything before writing a new audit log entry, and
- * to detect unsaved changes when leaving the editor. Programs are always
- * built from plain objects/arrays in a consistent shape, so a JSON-based
- * comparison is a safe stand-in for a real deep-equal here.
+ * to detect unsaved changes when leaving the editor.
  */
 export function programsEqual(a: ProgramData, b: ProgramData): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-export function getClients(): Client[] {
-  const raw = read<StoredClientRecord[]>(CLIENTS_KEY, []);
-  return raw.map(normalizeClient);
+// --- row <-> app-shape mapping ----------------------------------------------
+
+interface ClientRow {
+  id: string;
+  coach_id: string;
+  client_user_id: string | null;
+  nickname: string;
+  first_name: string;
+  last_name: string;
+  weight_kg: number | null;
+  height_cm: number | null;
+  location: string;
+  remarks: string;
+  email: string | null;
+  invite_token: string;
+  invite_claimed_at: string | null;
+  last_updated: string | null;
+  created_at: string;
+  notification_settings: unknown;
+  status: string | null;
 }
 
-export function createClient(input: NewClientInput): Client {
-  const clients = getClients();
-  const client: Client = {
-    id: crypto.randomUUID(),
-    nickname: input.nickname.trim(),
-    firstName: input.firstName?.trim() ?? '',
-    lastName: input.lastName?.trim() ?? '',
-    weightKg: input.weightKg ?? null,
-    heightCm: input.heightCm ?? null,
-    location: input.location?.trim() ?? '',
-    remarks: input.remarks?.trim() ?? '',
-    lastUpdated: null,
+function rowToClient(row: ClientRow): Client {
+  return {
+    id: row.id,
+    nickname: row.nickname,
+    firstName: row.first_name ?? '',
+    lastName: row.last_name ?? '',
+    weightKg: row.weight_kg,
+    heightCm: row.height_cm,
+    location: row.location ?? '',
+    remarks: row.remarks ?? '',
+    email: row.email ?? '',
+    inviteToken: row.invite_token,
+    inviteClaimedAt: row.invite_claimed_at,
+    lastUpdated: row.last_updated,
+    notificationSettings: parseNotificationSettings(row.notification_settings),
+    status: row.status === 'inactive' ? 'inactive' : 'active',
   };
-  write(CLIENTS_KEY, [...clients, client]);
-  return client;
 }
 
-export function getClient(clientId: string): Client | undefined {
-  return getClients().find((c) => c.id === clientId);
+interface ProgramRow {
+  id: string;
+  client_id: string;
+  title: string;
+  start_date: string | null;
+  end_date: string | null;
+  data: { weeks?: StoredProgramWeek[]; categories?: StoredProgramCategory[] } | null;
+  updated_at: string;
 }
 
-/** Updates an existing client's profile fields (nickname, name, weight/height, location, remarks). */
-export function updateClient(clientId: string, input: NewClientInput): Client | null {
-  const clients = getClients();
-  const idx = clients.findIndex((c) => c.id === clientId);
-  if (idx === -1) return null;
+function rowToProgram(row: ProgramRow): ProgramData {
+  return normalizeProgram({
+    title: row.title ?? '',
+    startDate: row.start_date ?? '',
+    endDate: row.end_date ?? '',
+    weeks: row.data?.weeks,
+    categories: row.data?.categories,
+  });
+}
 
+function programToRow(program: ProgramData) {
+  return {
+    title: program.title,
+    start_date: program.startDate || null,
+    end_date: program.endDate || null,
+    data: { weeks: program.weeks, categories: program.categories },
+  };
+}
+
+interface ProgramVersionRow {
+  id: string;
+  client_id: string;
+  timestamp: string;
+  note: string;
+  program_snapshot: StoredProgramData;
+}
+
+function rowToVersion(row: ProgramVersionRow): ProgramVersion {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    timestamp: row.timestamp,
+    note: row.note,
+    program: normalizeProgram(row.program_snapshot),
+  };
+}
+
+async function getCurrentUser(): Promise<{ id: string; email: string | undefined }> {
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) throw new Error('Not signed in.');
+  return { id: data.user.id, email: data.user.email };
+}
+
+// --- Clients -----------------------------------------------------------
+
+/** Returns the signed-in coach's clients. Relies on RLS to scope this to "my" clients, plus an explicit filter for clarity. */
+export async function getClients(): Promise<Client[]> {
+  const { id: coachId } = await getCurrentUser();
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*')
+    .eq('coach_id', coachId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data as ClientRow[]).map(rowToClient);
+}
+
+export async function createClient(input: NewClientInput): Promise<Client> {
+  const { id: coachId } = await getCurrentUser();
+  const { data, error } = await supabase
+    .from('clients')
+    .insert({
+      coach_id: coachId,
+      nickname: input.nickname.trim(),
+      first_name: input.firstName?.trim() ?? '',
+      last_name: input.lastName?.trim() ?? '',
+      weight_kg: input.weightKg ?? null,
+      height_cm: input.heightCm ?? null,
+      location: input.location?.trim() ?? '',
+      remarks: input.remarks?.trim() ?? '',
+      email: input.email?.trim() ?? '',
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToClient(data as ClientRow);
+}
+
+export async function getClient(clientId: string): Promise<Client | undefined> {
+  const { data, error } = await supabase.from('clients').select('*').eq('id', clientId).maybeSingle();
+  if (error) throw error;
+  return data ? rowToClient(data as ClientRow) : undefined;
+}
+
+/** Updates an existing client's profile fields. A blank nickname is ignored (existing nickname kept), matching the form's own "nickname required" rule. */
+export async function updateClient(clientId: string, input: NewClientInput): Promise<Client | null> {
   const nickname = input.nickname.trim();
-  const updated: Client = {
-    ...clients[idx],
-    nickname: nickname || clients[idx].nickname,
-    firstName: input.firstName?.trim() ?? '',
-    lastName: input.lastName?.trim() ?? '',
-    weightKg: input.weightKg ?? null,
-    heightCm: input.heightCm ?? null,
-    location: input.location?.trim() ?? '',
-    remarks: input.remarks?.trim() ?? '',
-  };
-  clients[idx] = updated;
-  write(CLIENTS_KEY, clients);
-  return updated;
+  const { data, error } = await supabase
+    .from('clients')
+    .update({
+      nickname: nickname || undefined,
+      first_name: input.firstName?.trim() ?? '',
+      last_name: input.lastName?.trim() ?? '',
+      weight_kg: input.weightKg ?? null,
+      height_cm: input.heightCm ?? null,
+      location: input.location?.trim() ?? '',
+      remarks: input.remarks?.trim() ?? '',
+      email: input.email?.trim() ?? '',
+    })
+    .eq('id', clientId)
+    .select()
+    .maybeSingle();
+  if (error) throw error;
+  return data ? rowToClient(data as ClientRow) : null;
 }
 
-function touchClient(clientId: string, timestamp: string): void {
-  const clients = getClients();
-  const idx = clients.findIndex((c) => c.id === clientId);
-  if (idx === -1) return;
-  clients[idx] = { ...clients[idx], lastUpdated: timestamp };
-  write(CLIENTS_KEY, clients);
+/**
+ * Flips a client between active and inactive (see the `status` doc on
+ * `Client`). Only touches the `status` column - the client's profile,
+ * saved program, and full history are completely untouched either way, so
+ * reactivating puts things back exactly as they were.
+ */
+export async function setClientStatus(clientId: string, status: ClientStatus): Promise<Client | null> {
+  const { data, error } = await supabase
+    .from('clients')
+    .update({ status })
+    .eq('id', clientId)
+    .select()
+    .maybeSingle();
+  if (error) throw error;
+  return data ? rowToClient(data as ClientRow) : null;
 }
+
+async function touchClient(clientId: string, timestamp: string): Promise<void> {
+  const { error } = await supabase.from('clients').update({ last_updated: timestamp }).eq('id', clientId);
+  if (error) throw error;
+}
+
+// --- Programs + history --------------------------------------------------
+
+const MAX_HISTORY_PER_CLIENT = 200;
 
 /** Returns the client's current program, or a blank default template if they don't have one yet. */
-export function getProgram(clientId: string): ProgramData {
-  const raw = read<StoredProgramData | null>(programKey(clientId), null);
-  if (!raw) return cloneProgram(DEFAULT_PROGRAM);
-  return normalizeProgram(raw);
+export async function getProgram(clientId: string): Promise<ProgramData> {
+  const { data, error } = await supabase.from('programs').select('*').eq('client_id', clientId).maybeSingle();
+  if (error) throw error;
+  if (!data) return cloneProgram(DEFAULT_PROGRAM);
+  return rowToProgram(data as ProgramRow);
 }
 
 /** Returns the client's audit log of past program versions, newest first. */
-export function getHistory(clientId: string): ProgramVersion[] {
-  interface StoredProgramVersion {
-    id: string;
-    clientId: string;
-    timestamp: string;
-    note: string;
-    program: StoredProgramData;
-  }
-  const raw = read<StoredProgramVersion[]>(historyKey(clientId), []);
-  return raw.map((v) => ({ ...v, program: normalizeProgram(v.program) }));
+export async function getHistory(clientId: string): Promise<ProgramVersion[]> {
+  const { data, error } = await supabase
+    .from('program_versions')
+    .select('*')
+    .eq('client_id', clientId)
+    .order('timestamp', { ascending: false })
+    .limit(MAX_HISTORY_PER_CLIENT);
+  if (error) throw error;
+  return (data as ProgramVersionRow[]).map(rowToVersion);
 }
 
 /** Saves `program` as the client's current program and appends a new audit log entry for it. */
-export function saveProgram(clientId: string, program: ProgramData, note = 'Saved'): ProgramVersion {
+export async function saveProgram(clientId: string, program: ProgramData, note = 'Saved'): Promise<ProgramVersion> {
   const timestamp = new Date().toISOString();
-  write(programKey(clientId), program);
-  touchClient(clientId, timestamp);
 
-  const version: ProgramVersion = {
-    id: crypto.randomUUID(),
-    clientId,
-    timestamp,
-    note,
-    program: cloneProgram(program),
-  };
-  const history = [version, ...getHistory(clientId)].slice(0, MAX_HISTORY_PER_CLIENT);
-  write(historyKey(clientId), history);
-  return version;
+  const { error: upsertError } = await supabase
+    .from('programs')
+    .upsert({ client_id: clientId, ...programToRow(program), updated_at: timestamp }, { onConflict: 'client_id' });
+  if (upsertError) throw upsertError;
+
+  await touchClient(clientId, timestamp);
+
+  const { data, error } = await supabase
+    .from('program_versions')
+    .insert({
+      client_id: clientId,
+      timestamp,
+      note,
+      program_snapshot: cloneProgram(program),
+    })
+    .select()
+    .single();
+  if (error) throw error;
+
+  return rowToVersion(data as ProgramVersionRow);
 }
 
 /**
@@ -361,11 +462,138 @@ export function saveProgram(clientId: string, program: ProgramData, note = 'Save
  * preserved) and logs the restore as a new audit log entry, so restoring is
  * itself auditable.
  */
-export function restoreVersion(clientId: string, versionId: string): ProgramData | null {
-  const version = getHistory(clientId).find((v) => v.id === versionId);
-  if (!version) return null;
+export async function restoreVersion(clientId: string, versionId: string): Promise<ProgramData | null> {
+  const { data, error } = await supabase
+    .from('program_versions')
+    .select('*')
+    .eq('id', versionId)
+    .eq('client_id', clientId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+
+  const version = rowToVersion(data as ProgramVersionRow);
   const restored = cloneProgram(version.program);
   const restoredAtLabel = new Date(version.timestamp).toLocaleString();
-  saveProgram(clientId, restored, `Restored from version saved ${restoredAtLabel}`);
+  await saveProgram(clientId, restored, `Restored from version saved ${restoredAtLabel}`);
   return restored;
+}
+
+// --- Client notifications --------------------------------------------------
+// A row lands here automatically (via a DB trigger on program_versions -
+// see the migration SQL) every time a coach saves a new version of a
+// client's program - a real edit, a fresh "New Program", or a restore.
+// Purely client-facing: a coach never reads this table.
+
+export interface ClientNotification {
+  id: string;
+  message: string;
+  createdAt: string;
+  readAt: string | null;
+}
+
+interface NotificationRow {
+  id: string;
+  client_id: string;
+  message: string;
+  created_at: string;
+  read_at: string | null;
+}
+
+function rowToNotification(row: NotificationRow): ClientNotification {
+  return {
+    id: row.id,
+    message: row.message,
+    createdAt: row.created_at,
+    readAt: row.read_at,
+  };
+}
+
+/** This client's notifications, newest first. RLS scopes this to the signed-in client's own profile. */
+export async function getNotifications(clientId: string): Promise<ClientNotification[]> {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .eq('client_id', clientId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  return (data as NotificationRow[]).map(rowToNotification);
+}
+
+/** Marks all of this client's unread notifications as read - call this when they open the notification bell. */
+export async function markNotificationsRead(clientId: string): Promise<void> {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('client_id', clientId)
+    .is('read_at', null);
+  if (error) throw error;
+}
+
+/**
+ * A client's own notification preferences - stored as jsonb on their row so
+ * more settings (push, digest frequency, etc.) can be added later without a
+ * new migration. Email notifications aren't actually sent anywhere yet
+ * (that's a future Resend integration) - this just lets a client opt in
+ * ahead of time.
+ */
+export interface NotificationSettings {
+  emailEnabled: boolean;
+}
+
+const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = { emailEnabled: false };
+
+function parseNotificationSettings(raw: unknown): NotificationSettings {
+  if (!raw || typeof raw !== 'object') return DEFAULT_NOTIFICATION_SETTINGS;
+  const obj = raw as Record<string, unknown>;
+  return { emailEnabled: obj.email_enabled === true };
+}
+
+/**
+ * Updates the signed-in client's own notification settings via the
+ * update_notification_settings() RPC (security definer, same pattern as
+ * claim_invite) - it only ever touches the notification_settings column on
+ * the caller's own client row, never anyone else's and nothing else on it.
+ */
+export async function updateNotificationSettings(emailEnabled: boolean): Promise<NotificationSettings> {
+  const { data, error } = await supabase.rpc('update_notification_settings', { p_email_enabled: emailEnabled });
+  if (error) throw error;
+  return parseNotificationSettings((data as ClientRow).notification_settings);
+}
+
+/**
+ * For a signed-in CLIENT account: returns the client profile linked to
+ * them (client_user_id = this account), or null if they haven't claimed
+ * one yet. Claiming itself happens once, via their personal invite link -
+ * see claimInvite() and pages/InvitePage.tsx - not automatically here.
+ */
+export async function getMyClientProfile(): Promise<Client | null> {
+  const { id: userId } = await getCurrentUser();
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*')
+    .eq('client_user_id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? rowToClient(data as ClientRow) : null;
+}
+
+/**
+ * Links the signed-in account to the client profile that owns `token`,
+ * via the `claim_invite` Postgres function (security definer, so it can
+ * bypass RLS just enough to perform this one linkage check server-side -
+ * see the schema notes). Safe to call again for an account that already
+ * claimed this same profile; throws if the token is unknown or already
+ * claimed by a different account.
+ */
+export async function claimInvite(token: string): Promise<Client> {
+  const { data, error } = await supabase.rpc('claim_invite', { p_token: token });
+  if (error) throw error;
+  return rowToClient(data as ClientRow);
+}
+
+/** The personal invite link for a client - the only way that client can sign up or sign back in. Share it with them directly (it is not a public URL). */
+export function buildInviteUrl(client: Pick<Client, 'inviteToken'>): string {
+  return `${window.location.origin}/invite/${client.inviteToken}`;
 }

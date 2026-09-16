@@ -17,7 +17,7 @@ export default function UnsavedChangesModal({
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
       <div
-        className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-sm p-6"
+        className="bg-off-white dark:bg-gray-800 rounded-xl w-full max-w-sm p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-3 mb-2">

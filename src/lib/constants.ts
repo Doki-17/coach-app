@@ -14,3 +14,22 @@ export function formatProgramDate(iso: string): string {
   if (!y || !m || !d) return '';
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
+
+/**
+ * Which program week (1-indexed) "today" falls into, counting 7-day blocks
+ * from the program's start date - e.g. days 0-6 are week 1, 7-13 are week 2,
+ * etc. Returns null when there's no start date to count from, since without
+ * one there's no way to know which weeks are "done" yet.
+ */
+export function currentProgramWeekNumber(startDate: string): number | null {
+  if (!startDate) return null;
+  const [y, m, d] = startDate.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  const start = new Date(y, m - 1, d);
+  start.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.floor((today.getTime() - start.getTime()) / 86400000);
+  if (diffDays < 0) return 1; // program hasn't started yet - nothing is "done"
+  return Math.floor(diffDays / 7) + 1;
+}

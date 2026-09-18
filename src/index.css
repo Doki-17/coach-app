@@ -1,1 +1,69 @@
 @import "tailwindcss";
+
+/* Tailwind v4 dark variant driven by a `.dark` class on <html> (toggled by
+   useTheme.ts) rather than only the OS `prefers-color-scheme` media query,
+   so the manual light/dark toggle actually takes effect. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* A cool-toned neutral off-white used in place of stark bg-white across the
+   app's light-mode surfaces (cards, modals, buttons, inputs, the exported
+   program canvas) - registering it here makes `bg-off-white` / `text-off-white`
+   / etc. available as ordinary Tailwind utilities. Kept slightly on the cool
+   (blue-gray) side rather than warm/cream so it doesn't clash with the
+   yellow/amber category accent colors. Dark mode is unaffected - it already
+   uses dark:bg-gray-800/900, never white, so there's nothing to swap there. */
+@theme {
+  --color-off-white: #f8f9fa;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Plays once when a freshly-routed page mounts (see the key={pathname} wrapper
+   in App.tsx) - a small fade + rise so switching pages doesn't feel instant/flat. */
+@keyframes page-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-transition {
+  animation: page-fade-in 0.32s ease-out;
+}
+
+/* A thin bar that sweeps across the top of the page on every navigation -
+   see RouteProgressBar.tsx. */
+@keyframes route-progress {
+  0% {
+    width: 0%;
+    opacity: 1;
+  }
+  70% {
+    width: 75%;
+    opacity: 1;
+  }
+  100% {
+    width: 100%;
+    opacity: 0;
+  }
+}
+
+.route-progress-bar {
+  animation: route-progress 0.5s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .page-transition,
+  .route-progress-bar {
+    animation: none !important;
+  }
+}

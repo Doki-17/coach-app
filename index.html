@@ -5,6 +5,19 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>coach-app</title>
+    <script>
+      // Applied synchronously, before anything paints, so the page never
+      // flashes the wrong theme for a frame. Mirrors the logic in
+      // src/hooks/useTheme.ts (kept in plain JS here since this runs before
+      // any modules are loaded).
+      (function () {
+        try {
+          var stored = localStorage.getItem('coachapp:theme');
+          var dark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

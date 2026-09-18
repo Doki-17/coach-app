@@ -39,10 +39,12 @@ export interface MobileProgramEditorProps {
   onToggleWeekPm: (weekIndex: number) => void;
   onUpdateDay: (weekIndex: number, period: 'am' | 'pm', dayIndex: number, value: string) => void;
   onAddWeek: () => void;
+  onDeleteWeek: (weekIndex: number) => void;
   categories: ProgramCategory[];
   onUpdateCategoryName: (catIndex: number, value: string) => void;
   onUpdateCategorySubtitle: (catIndex: number, value: string) => void;
   onAddCategory: (categoryTypeId: string) => void;
+  onDeleteCategory: (catIndex: number) => void;
   onAddExercise: (catIndex: number) => void;
   onUpdateExerciseName: (catIndex: number, exIndex: number, value: string) => void;
   onUpdateExerciseFixed: (catIndex: number, exIndex: number, key: string, value: string) => void;
@@ -110,11 +112,13 @@ function WeekEditorPanel({
   onBack,
   onTogglePm,
   onUpdateDay,
+  onDelete,
 }: {
   week: ProgramWeek;
   onBack: () => void;
   onTogglePm: () => void;
   onUpdateDay: (period: 'am' | 'pm', dayIndex: number, value: string) => void;
+  onDelete?: () => void;
 }) {
   return (
     <div className="fixed inset-0 z-40 bg-off-white dark:bg-gray-900 flex flex-col">
@@ -122,9 +126,16 @@ function WeekEditorPanel({
         <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-gray-900 dark:text-gray-100 font-bold">
           <ArrowLeft className="w-4 h-4" /> Week {week.id}
         </button>
-        <button type="button" onClick={onTogglePm} className="flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-400">
-          {week.showPm ? (<><Minus className="w-3.5 h-3.5" /> PM row</>) : (<><Plus className="w-3.5 h-3.5" /> PM row</>)}
-        </button>
+        <div className="flex items-center gap-3 shrink-0">
+          <button type="button" onClick={onTogglePm} className="flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-400">
+            {week.showPm ? (<><Minus className="w-3.5 h-3.5" /> PM row</>) : (<><Plus className="w-3.5 h-3.5" /> PM row</>)}
+          </button>
+          {onDelete && (
+            <button type="button" onClick={onDelete} title="Delete week" className="text-gray-400 hover:text-red-500 p-0.5">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {DAYS.map((day, dIndex) => (
@@ -267,6 +278,7 @@ function CategoryEditorPanel({
   onOpenExercise,
   onDuplicateExercise,
   onDeleteExercise,
+  onDelete,
 }: {
   category: ProgramCategory;
   onBack: () => void;
@@ -276,6 +288,7 @@ function CategoryEditorPanel({
   onOpenExercise: (exIndex: number) => void;
   onDuplicateExercise: (exIndex: number) => void;
   onDeleteExercise: (exIndex: number) => void;
+  onDelete?: () => void;
 }) {
   const visual = getCategoryVisual(category.categoryType);
 
@@ -293,6 +306,11 @@ function CategoryEditorPanel({
           onChange={(e) => onUpdateName(e.target.value)}
           className="flex-1 min-w-0 text-base font-bold uppercase bg-transparent outline-none text-gray-900 dark:text-gray-100"
         />
+        {onDelete && (
+          <button type="button" onClick={onDelete} title="Delete category" className="shrink-0 text-gray-400 hover:text-red-500 p-0.5">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -348,10 +366,12 @@ export default function MobileProgramEditor({
   onToggleWeekPm,
   onUpdateDay,
   onAddWeek,
+  onDeleteWeek,
   categories,
   onUpdateCategoryName,
   onUpdateCategorySubtitle,
   onAddCategory,
+  onDeleteCategory,
   onAddExercise,
   onUpdateExerciseName,
   onUpdateExerciseFixed,
@@ -405,6 +425,10 @@ export default function MobileProgramEditor({
           onOpenExercise={(exIndex) => setOpenExercise({ catIndex: openCategoryIndex, exIndex })}
           onDuplicateExercise={(exIndex) => onDuplicateExercise(openCategoryIndex, exIndex)}
           onDeleteExercise={(exIndex) => onDeleteExercise(openCategoryIndex, exIndex)}
+          onDelete={() => {
+            onDeleteCategory(openCategoryIndex);
+            setOpenCategoryIndex(null);
+          }}
         />
       );
     }
@@ -419,6 +443,10 @@ export default function MobileProgramEditor({
           onBack={() => setOpenWeekIndex(null)}
           onTogglePm={() => onToggleWeekPm(openWeekIndex)}
           onUpdateDay={(period, dayIndex, value) => onUpdateDay(openWeekIndex, period, dayIndex, value)}
+          onDelete={weeks.length > 1 ? () => {
+            onDeleteWeek(openWeekIndex);
+            setOpenWeekIndex(null);
+          } : undefined}
         />
       );
     }
@@ -461,18 +489,32 @@ export default function MobileProgramEditor({
           {weeks.map((week, wIndex) => {
             const filledDays = DAYS.filter((_, i) => week.am[i].trim() || week.pm[i].trim()).length;
             return (
-              <button
+              <div
                 key={week.id}
-                type="button"
-                onClick={() => setOpenWeekIndex(wIndex)}
-                className="w-full flex items-center justify-between gap-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-950/40 px-4 py-3 text-left"
+                className="flex items-center gap-0.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-950/40 pl-1 pr-1"
               >
-                <span className="font-bold text-blue-900 dark:text-blue-300 text-sm">Week {week.id}</span>
-                <span className="flex items-center gap-2 text-xs text-blue-700/70 dark:text-blue-400/70">
-                  {filledDays > 0 ? `${filledDays} day${filledDays === 1 ? '' : 's'} scheduled` : 'Nothing scheduled yet'}
-                  <ChevronRight className="w-4 h-4" />
-                </span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setOpenWeekIndex(wIndex)}
+                  className="flex-1 min-w-0 flex items-center justify-between gap-2 px-3 py-3 text-left"
+                >
+                  <span className="font-bold text-blue-900 dark:text-blue-300 text-sm">Week {week.id}</span>
+                  <span className="flex items-center gap-2 text-xs text-blue-700/70 dark:text-blue-400/70">
+                    {filledDays > 0 ? `${filledDays} day${filledDays === 1 ? '' : 's'} scheduled` : 'Nothing scheduled yet'}
+                    <ChevronRight className="w-4 h-4" />
+                  </span>
+                </button>
+                {weeks.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => onDeleteWeek(wIndex)}
+                    title="Delete week"
+                    className="shrink-0 text-blue-700/50 dark:text-blue-400/50 hover:text-red-500 p-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>
@@ -487,24 +529,36 @@ export default function MobileProgramEditor({
           {categories.map((category, catIndex) => {
             const visual = getCategoryVisual(category.categoryType);
             return (
-              <button
+              <div
                 key={category.id}
-                type="button"
-                onClick={() => setOpenCategoryIndex(catIndex)}
-                className={`w-full flex items-center gap-3 rounded-xl border border-gray-200 dark:border-gray-700 p-3 text-left border-l-4 ${visual.headerBg} ${visual.darkHeaderBg} ${visual.headerBorder} ${visual.darkHeaderBorder}`}
+                className={`flex items-center gap-0.5 rounded-xl border border-gray-200 dark:border-gray-700 border-l-4 pl-1 pr-1 ${visual.headerBg} ${visual.darkHeaderBg} ${visual.headerBorder} ${visual.darkHeaderBorder}`}
               >
-                <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${visual.iconBg} ${visual.darkIconBg}`}>
-                  <visual.Icon className={`w-4 h-4 ${visual.iconText} ${visual.darkIconText}`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-bold uppercase truncate block text-gray-900 dark:text-gray-100">{category.name || 'Untitled category'}</span>
-                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                    {category.exercises.length} exercise{category.exercises.length === 1 ? '' : 's'}
-                    {category.subtitle ? ` · ${category.subtitle}` : ''}
-                  </span>
-                </div>
-                <ChevronRight className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setOpenCategoryIndex(catIndex)}
+                  className="flex-1 min-w-0 flex items-center gap-3 p-2 text-left"
+                >
+                  <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${visual.iconBg} ${visual.darkIconBg}`}>
+                    <visual.Icon className={`w-4 h-4 ${visual.iconText} ${visual.darkIconText}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-bold uppercase truncate block text-gray-900 dark:text-gray-100">{category.name || 'Untitled category'}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {category.exercises.length} exercise{category.exercises.length === 1 ? '' : 's'}
+                      {category.subtitle ? ` · ${category.subtitle}` : ''}
+                    </span>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteCategory(catIndex)}
+                  title="Delete category"
+                  className="shrink-0 text-gray-400 dark:text-gray-500 hover:text-red-500 p-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             );
           })}
         </div>

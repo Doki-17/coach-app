@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, LogOut, Pencil, Plus, History as HistoryIcon, MapPin, X, Menu, Image as ImageIcon, FileText, Link2, Check, ChevronDown, Bell, Settings, AlertTriangle } from 'lucide-react';
-import { toPng } from 'html-to-image';
-import { jsPDF } from 'jspdf';
+import { captureFullSnapshot, paginateForPdf, buildAndSavePdf, downloadDataUrl } from '../../../lib/exportProgram';
 import { getClient, getProgram, getHistory, restoreVersion, updateClient, setClientStatus, buildInviteUrl, getNotifications, markNotificationsRead, updateNotificationSettings, type Client, type NewClientInput, type ProgramData, type ProgramVersion, type ClientNotification } from '../../../lib/storage';
 import { displayProgramTitle } from '../../../lib/constants';
 import { computeBMI, bmiCategory } from '../../../lib/health';
@@ -222,19 +221,12 @@ export default function ClientProgramView() {
     }
   };
 
-  const captureSnapshot = async () => {
-    if (!printRef.current) return null;
-    const width = printRef.current.offsetWidth;
-    const height = printRef.current.offsetHeight;
-    const dataUrl = await toPng(printRef.current, { cacheBust: true, backgroundColor: '#f8f9fa' });
-    return { dataUrl, width, height };
-  };
-
   const handleExportPNG = async () => {
     try {
-      const captured = await captureSnapshot();
-      if (!captured) return;
-      setExportPreview({ format: 'png', ...captured });
+      if (!printRef.current) return;
+      const captured = await captureFullSnapshot(printRef.current);
+      // A PNG isn't paged - it's just the whole program as one tall image.
+      setExportPreview({ format: 'png', pages: [captured] });
     } catch (err) {
       console.error('Error generating PNG', err);
     }
@@ -242,9 +234,10 @@ export default function ClientProgramView() {
 
   const handleExportPDF = async () => {
     try {
-      const captured = await captureSnapshot();
-      if (!captured) return;
-      setExportPreview({ format: 'pdf', ...captured });
+      if (!printRef.current) return;
+      const captured = await captureFullSnapshot(printRef.current);
+      const pages = await paginateForPdf(printRef.current, captured.dataUrl, captured.width, captured.height);
+      setExportPreview({ format: 'pdf', pages });
     } catch (err) {
       console.error('Error generating PDF', err);
     }
@@ -252,20 +245,11 @@ export default function ClientProgramView() {
 
   const handleConfirmExport = () => {
     if (!exportPreview) return;
-    const { format, dataUrl, width, height } = exportPreview;
+    const { format, pages } = exportPreview;
     if (format === 'png') {
-      const link = document.createElement('a');
-      link.download = buildExportFilename(clientName, program.title, 'png');
-      link.href = dataUrl;
-      link.click();
+      downloadDataUrl(pages[0].dataUrl, buildExportFilename(clientName, program.title, 'png'));
     } else {
-      const pdf = new jsPDF({
-        orientation: width >= height ? 'landscape' : 'portrait',
-        unit: 'px',
-        format: [width, height],
-      });
-      pdf.addImage(dataUrl, 'PNG', 0, 0, width, height);
-      pdf.save(buildExportFilename(clientName, program.title, 'pdf'));
+      buildAndSavePdf(pages, buildExportFilename(clientName, program.title, 'pdf'));
     }
     setExportPreview(null);
   };
@@ -538,9 +522,9 @@ export default function ClientProgramView() {
                 above is visible. This is the node PNG/PDF export actually captures, so a
                 download always looks like the table above, never the phone cards, no
                 matter what device it was downloaded from. */}
-            <div className="fixed top-0 left-0 w-0 h-0 overflow-hidden pointer-events-none" aria-hidden="true">
-              <div ref={printRef} className="bg-off-white p-8 rounded-xl shadow-sm border border-gray-200 min-w-[960px] text-gray-900">
-                <ProgramSnapshotView program={program} hideCompletedWeeks={!isCoach} />
+            <div className="fixed top-0 left-0 opacity-0 pointer-events-none" style={{ width: '10000px', overflow: 'visible' }} aria-hidden="true">
+              <div ref={printRef} className="bg-off-white p-8 rounded-xl shadow-sm border border-gray-200 min-w-[960px] w-fit text-gray-900">
+                <ProgramSnapshotView program={program} hideCompletedWeeks={!isCoach} scrollTables={false} />
               </div>
             </div>
           </>

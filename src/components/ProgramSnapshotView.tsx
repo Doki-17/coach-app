@@ -9,17 +9,28 @@ import type { ProgramData } from '../lib/storage';
 export default function ProgramSnapshotView({
   program,
   hideCompletedWeeks = false,
+  scrollTables = true,
 }: {
   program: ProgramData;
   /** When true, weeks that are fully in the past (based on the program's start date) are dropped from the weekly calendar - the exercise tables below it are unaffected. */
   hideCompletedWeeks?: boolean;
+  /** Whether wide tables scroll horizontally within their own bordered box (the normal on-screen behavior) or are left to their full natural width. The off-screen copy used for PNG/PDF export sets this to false - a scrolled table would otherwise only capture whatever was scrolled into view. */
+  scrollTables?: boolean;
 }) {
+  const tableWrapClass = scrollTables ? 'overflow-x-auto' : 'overflow-visible';
+  // w-full makes a table claim 100% of its container regardless of its own
+  // columns' widths - fine on screen (it should fill the available box),
+  // but wrong for the off-screen export copy, whose container is sized
+  // generously on purpose so nothing wide gets clipped: a w-full table
+  // would just balloon to fill that whole allowance instead of sitting at
+  // its own natural width. w-auto lets it size to its columns instead.
+  const tableWidthClass = scrollTables ? 'w-full' : 'w-auto';
   const currentWeek = hideCompletedWeeks ? currentProgramWeekNumber(program.startDate) : null;
   const visibleWeeks = currentWeek == null ? program.weeks : program.weeks.filter((w) => w.id >= currentWeek);
 
   return (
     <div className="space-y-8">
-      <div className="relative mb-4 min-h-44 flex items-center justify-center">
+      <div className="relative mb-4 min-h-44">
         {/* Date range - upper left. Absolutely positioned (out of flow) so its
             width never shifts the title away from true center, and vertically
             centered to sit on the same middle line as the title and logo. */}
@@ -29,7 +40,7 @@ export default function ProgramSnapshotView({
           )}
         </div>
 
-        <h2 className="w-full max-w-2xl text-2xl font-bold uppercase tracking-wider text-center">{displayProgramTitle(program.title)}</h2>
+        <h2 className="absolute left-0 right-0 top-1/2 -translate-y-1/2 mx-auto w-full max-w-2xl text-2xl font-bold uppercase tracking-wider text-center">{displayProgramTitle(program.title)}</h2>
 
         {/* Coach's logo - upper right */}
         <img src={logo} alt="" className="absolute right-0 top-1/2 -translate-y-1/2 w-40 h-40 object-contain pointer-events-none" />
@@ -37,8 +48,8 @@ export default function ProgramSnapshotView({
 
       {visibleWeeks.length > 0 ? (
       <div className="rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm text-center border-collapse table-fixed">
+      <div className={tableWrapClass}>
+        <table className={`${tableWidthClass} text-sm text-center border-collapse table-fixed`}>
           <thead className="bg-blue-50">
             <tr>
               <th className="border p-2 w-20 text-center text-blue-900 font-bold text-xs uppercase tracking-wide">Week</th>
@@ -116,8 +127,8 @@ export default function ProgramSnapshotView({
               </div>
             </div>
             <div className="rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left border-collapse">
+            <div className={tableWrapClass}>
+            <table className={`${tableWidthClass} text-sm text-left border-collapse`}>
               <thead className={visual.headerBg}>
                 {multiField ? (
                   <>
